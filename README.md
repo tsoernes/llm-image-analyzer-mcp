@@ -1,16 +1,18 @@
 # LLM Image Analyzer MCP Server
 
-FastMCP server for analyzing images using Azure OpenAI vision models (GPT-4o, GPT-5.2, etc.).
+FastMCP server for analyzing images using vision models via PydanticAI - supporting Azure OpenAI, OpenAI, Anthropic, and more.
 
 ## Features
 
-- 🖼️ **Analyze images** with custom prompts using Azure OpenAI vision models
+- 🖼️ **Analyze images** with custom prompts using vision models
+- 🌐 **Model-agnostic** - supports Azure OpenAI, OpenAI, Anthropic, and other providers via PydanticAI
 - 📁 **Support for local files and URLs** - works with both local image paths and web URLs
 - 🎨 **Multiple image formats** - JPEG, PNG, GIF, WebP
 - 🔧 **Flexible configuration** - customize model, tokens, detail level, reasoning effort
 - 🐛 **Debug mode** - full stack traces when `MCP_DEBUG=true`
 - ⚡ **Async I/O** - efficient async operations throughout
 - 📊 **Token usage tracking** - see prompt, completion, and total tokens used
+- ✨ **GPT-5 support** - automatic handling of `max_completion_tokens` for GPT-5 models
 
 ## Use Cases
 
@@ -27,7 +29,11 @@ FastMCP server for analyzing images using Azure OpenAI vision models (GPT-4o, GP
 
 - Python 3.13+
 - [uv](https://github.com/astral-sh/uv) package manager
-- Azure OpenAI account with vision model deployment
+- API key for your chosen provider:
+  - Azure OpenAI account with vision model deployment, OR
+  - OpenAI API key, OR
+  - Anthropic API key, OR
+  - Other PydanticAI-supported provider
 
 ### Setup
 
@@ -47,23 +53,39 @@ uv sync
 Create a `.env` file in the project root:
 
 ```bash
-# Azure OpenAI Configuration
+# Model Configuration (choose one provider)
+MODEL=azure:gpt-5.2
+
+# Azure OpenAI (if using azure: models)
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key-here
-AZURE_OPENAI_MODEL=gpt-5.2
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
+
+# OpenAI (if using openai: models)
+# OPENAI_API_KEY=your-openai-api-key
+
+# Anthropic (if using anthropic: models)
+# ANTHROPIC_API_KEY=your-anthropic-api-key
 
 # Optional: Enable debug mode for detailed error traces
 MCP_DEBUG=false
 ```
 
-**Required environment variables:**
-- `AZURE_OPENAI_ENDPOINT` - Your Azure OpenAI endpoint URL
-- `AZURE_OPENAI_API_KEY` - Your Azure OpenAI API key
+**Model Configuration:**
+- `MODEL` - Model identifier in format `provider:model-name` (default: `azure:gpt-5.2`)
+  - Examples: `azure:gpt-5.2`, `openai:gpt-4o`, `anthropic:claude-sonnet-4`
 
-**Optional environment variables:**
-- `AZURE_OPENAI_MODEL` - Default model (default: `gpt-5.2`)
-- `AZURE_OPENAI_API_VERSION` - API version (default: `2024-12-01-preview`)
+**Provider-Specific Configuration:**
+- **Azure OpenAI** (required if using `azure:` models):
+  - `AZURE_OPENAI_ENDPOINT` - Your Azure OpenAI endpoint URL
+  - `AZURE_OPENAI_API_KEY` - Your Azure OpenAI API key
+  - `AZURE_OPENAI_API_VERSION` - API version (default: `2024-12-01-preview`)
+- **OpenAI** (required if using `openai:` models):
+  - `OPENAI_API_KEY` - Your OpenAI API key
+- **Anthropic** (required if using `anthropic:` models):
+  - `ANTHROPIC_API_KEY` - Your Anthropic API key
+
+**Optional:**
 - `MCP_DEBUG` - Enable debug mode with full stack traces (default: `false`)
 
 ## Usage
@@ -90,8 +112,8 @@ Analyze one or more images using Azure OpenAI vision models.
 |-----------|------|----------|---------|-------------|
 | `prompt` | `str` | Yes | - | Question or instruction for analyzing the image(s) |
 | `image_paths` | `list[str]` | Yes | - | List of local file paths or URLs to images |
-| `model` | `str` | No | `gpt-5.2` | Azure OpenAI model deployment name |
-| `max_tokens` | `int` | No | `None` | Maximum tokens in response (None = no limit) |
+| `model` | `str` | No | `azure:gpt-5.2` | Model identifier (format: `provider:model-name`) |
+| `max_tokens` | `int` | No | `None` | Maximum tokens in response (auto-converts to `max_completion_tokens` for GPT-5) |
 | `detail` | `str` | No | `"auto"` | Image detail level: `"auto"`, `"low"`, or `"high"` |
 | `reasoning_effort` | `str` | No | `"high"` | Reasoning effort: `"low"`, `"medium"`, or `"high"` |
 
@@ -126,13 +148,22 @@ Returns a dictionary with:
 }
 ```
 
-**Extract text with custom model:**
+**Extract text with OpenAI:**
 ```json
 {
   "prompt": "Extract all visible text from this document",
   "image_paths": ["~/documents/scan.png"],
-  "model": "gpt-4o",
+  "model": "openai:gpt-4o",
   "max_tokens": 500
+}
+```
+
+**Use Anthropic Claude:**
+```json
+{
+  "prompt": "Analyze this architectural design",
+  "image_paths": ["~/designs/floor_plan.jpg"],
+  "model": "anthropic:claude-sonnet-4"
 }
 ```
 
@@ -172,17 +203,27 @@ You can override the default model per request:
 
 1. **Environment variable** (applies to all requests):
    ```bash
-   AZURE_OPENAI_MODEL=gpt-4o
+   MODEL=openai:gpt-4o
    ```
 
 2. **Per-request parameter** (overrides env var):
    ```json
    {
-     "model": "gpt-4o",
+     "model": "anthropic:claude-sonnet-4",
      "prompt": "...",
      "image_paths": [...]
    }
    ```
+
+**Supported Providers:**
+- `azure:` - Azure OpenAI (e.g., `azure:gpt-5.2`, `azure:gpt-4o`)
+- `openai:` - OpenAI (e.g., `openai:gpt-4o`, `openai:gpt-4-turbo`)
+- `anthropic:` - Anthropic (e.g., `anthropic:claude-sonnet-4`)
+- And more via [PydanticAI's model support](https://ai.pydantic.dev/models/)
+
+### GPT-5 Models
+
+GPT-5 models use `max_completion_tokens` instead of `max_tokens`. The server automatically handles this conversion when you specify `max_tokens` for a GPT-5 model.
 
 ## Debug Mode
 
@@ -209,7 +250,7 @@ The server provides actionable error messages:
 - **Missing image file**: "Image not found at path: X. Please check that the file exists and the path is correct."
 - **Invalid image format**: "Invalid image file at X. Supported formats: JPEG, PNG, GIF, WebP."
 - **Inaccessible URL**: "Failed to access URL: X. Error: connection timeout"
-- **Missing config**: "Azure OpenAI not configured. Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env file."
+- **Missing config**: "Azure OpenAI not configured. Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env file or use a different model provider."
 
 ## Development
 
@@ -255,7 +296,7 @@ uv run ruff format src/
 ## Dependencies
 
 - **fastmcp** - MCP server framework
-- **openai** - Azure OpenAI client
+- **pydantic-ai** - Model-agnostic AI framework with multi-provider support
 - **python-dotenv** - Environment variable loading
 - **pillow** - Image format validation
 - **httpx** - Async HTTP client for URL validation
@@ -284,9 +325,11 @@ For issues or questions:
 
 ### 0.1.0 (2026-01-01)
 
-- Initial release
+- Initial release with PydanticAI integration
 - `analyze_images` tool with multi-image support
+- Model-agnostic support (Azure OpenAI, OpenAI, Anthropic, and more)
 - Support for local files and URLs
 - Configurable model, tokens, detail, reasoning effort
+- Automatic `max_completion_tokens` handling for GPT-5 models
 - Debug mode with stack traces
 - Comprehensive error handling

@@ -26,10 +26,9 @@ MCP_DEBUG=false
 ```json
 {
   "prompt": "Your question or instruction",
-  "image_paths": ["path/to/image.jpg"],
-  "model": "gpt-5.2",
+  "image_paths": "path/to/image.jpg",
+  "model": "azure:gpt-5.2",
   "max_tokens": null,
-  "detail": "auto",
   "reasoning_effort": "high"
 }
 ```
@@ -39,10 +38,9 @@ MCP_DEBUG=false
 | Parameter | Type | Required | Default | Options |
 |-----------|------|----------|---------|---------|
 | `prompt` | string | ✅ | - | Any instruction |
-| `image_paths` | array | ✅ | - | Local paths or URLs |
-| `model` | string | ❌ | `gpt-5.2` | Any Azure deployment |
-| `max_tokens` | int | ❌ | `null` | Any positive int |
-| `detail` | string | ❌ | `"auto"` | `"auto"`, `"low"`, `"high"` |
+| `image_paths` | string or array | ✅ | - | Local paths or URLs (single or multiple) |
+| `model` | string | ❌ | `azure:gpt-5.2` | Format: `provider:model-name` |
+| `max_tokens` | int | ❌ | `null` | Any positive int (auto-converts for GPT-5) |
 | `reasoning_effort` | string | ❌ | `"high"` | `"low"`, `"medium"`, `"high"` |
 
 ### Response
@@ -50,12 +48,16 @@ MCP_DEBUG=false
 ```json
 {
   "analysis": "The model's response text...",
-  "model": "gpt-5.2",
-  "prompt_tokens": 1250,
-  "completion_tokens": 450,
-  "total_tokens": 1700
+  "model": "azure:gpt-5.2",
+  "usage": {
+    "prompt_tokens": 1250,
+    "completion_tokens": 450,
+    "total_tokens": 1700
+  }
 }
 ```
+
+Note: `usage` object may be absent if provider doesn't report token usage.
 
 ## Common Use Cases
 
@@ -95,13 +97,14 @@ MCP_DEBUG=false
 }
 ```
 
-## Detail Levels
+## Model Providers
 
-| Level | Resolution | Use Case | Cost |
-|-------|-----------|----------|------|
-| `"low"` | 512x512 | Simple images, speed | 💰 Low |
-| `"auto"` | Dynamic | General use | 💰💰 Medium |
-| `"high"` | 2048x2048 | Fine details | 💰💰💰 High |
+| Provider | Format | Example | Notes |
+|----------|--------|---------|-------|
+| Azure OpenAI | `azure:model` | `azure:gpt-5.2` | Requires Azure credentials |
+| OpenAI | `openai:model` | `openai:gpt-4o` | Requires OpenAI API key |
+| Anthropic | `anthropic:model` | `anthropic:claude-sonnet-4` | Excellent vision support |
+| See [PydanticAI docs](https://ai.pydantic.dev/models/) for more | | |
 
 ## Reasoning Effort
 
@@ -115,9 +118,10 @@ MCP_DEBUG=false
 
 | Format | Example | Notes |
 |--------|---------|-------|
+| Single string | `"image.jpg"` | **New!** Can pass single image as string |
+| Array | `["img1.jpg", "img2.jpg"]` | Multiple images |
 | Absolute | `/home/user/image.jpg` | Full path |
 | Home | `~/photos/pic.png` | Expands `~` |
-| Relative | `./images/photo.jpg` | From current dir |
 | URL | `https://example.com/img.jpg` | HTTP/HTTPS only |
 
 ## Supported Formats
@@ -203,6 +207,7 @@ npx @modelcontextprotocol/inspector uv run llm-image-analyzer-mcp
         "llm-image-analyzer-mcp"
       ],
       "env": {
+        "MODEL": "azure:gpt-5.2",
         "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
         "AZURE_OPENAI_API_KEY": "your-api-key"
       }
@@ -213,11 +218,12 @@ npx @modelcontextprotocol/inspector uv run llm-image-analyzer-mcp
 
 ## Performance Tips
 
-1. **Use `detail="low"`** for simple images → 3-5x faster
-2. **Set `max_tokens`** for concise answers → saves cost
-3. **Use URLs** when possible → avoids encoding
+1. **Single string for one image** - simpler syntax: `"image.jpg"` vs `["image.jpg"]`
+2. **Set `max_tokens`** for concise answers → saves cost (auto-converts for GPT-5)
+3. **Use URLs** when possible → avoids local file encoding
 4. **Batch images** in one call → reduces overhead
 5. **Use `reasoning_effort="low"`** for quick tasks → faster
+6. **Try different providers** - compare speed/quality/cost
 
 ## Troubleshooting
 

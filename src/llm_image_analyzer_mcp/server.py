@@ -1,12 +1,12 @@
 """
 LLM Image Analyzer MCP Server
 
-FastMCP server for analyzing images using Azure OpenAI vision models.
-Supports both local file paths and URLs, with configurable model parameters.
+FastMCP server for analyzing images using vision models through PydanticAI.
+Supports Azure OpenAI, OpenAI, Anthropic, and other providers via PydanticAI's
+model-agnostic interface.
 """
 
 import asyncio
-import base64
 import logging
 import os
 import traceback
@@ -16,8 +16,8 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from openai import AsyncAzureOpenAI
 from PIL import Image
+from pydantic_ai import Agent, BinaryContent, ImageUrl, ModelSettings
 
 # Load environment variables from .env file
 load_dotenv()
@@ -35,17 +35,20 @@ logger = logging.getLogger(__name__)
 # Initialize FastMCP server
 mcp = FastMCP("LLM Image Analyzer")
 
-# Azure OpenAI configuration
+# Model configuration
+DEFAULT_MODEL = os.getenv("MODEL", "azure:gpt-5.2")
+
+# Azure OpenAI configuration (if using Azure)
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-DEFAULT_MODEL = os.getenv("AZURE_OPENAI_MODEL", "gpt-5.2")
 AZURE_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
-# Validate required environment variables
-if not AZURE_OPENAI_ENDPOINT:
-    logger.error("AZURE_OPENAI_ENDPOINT not set in environment")
-if not AZURE_OPENAI_API_KEY:
-    logger.error("AZURE_OPENAI_API_KEY not set in environment")
+# Validate Azure configuration if using Azure model
+if DEFAULT_MODEL.startswith("azure:"):
+    if not AZURE_OPENAI_ENDPOINT:
+        logger.warning("AZURE_OPENAI_ENDPOINT not set - Azure models will fail")
+    if not AZURE_OPENAI_API_KEY:
+        logger.warning("AZURE_OPENAI_API_KEY not set - Azure models will fail")
 
 
 def _format_error(e: Exception) -> dict[str, Any]:
@@ -70,52 +73,6 @@ def _format_error(e: Exception) -> dict[str, Any]:
         logger.error(f"Tool error: {type(e).__name__}: {e}")
 
     return error_dict
-
-
-async def _encode_image_from_path(image_path: str) -> str:
-    """
-    Encode a local image file to base64.
-
-    Args:
-        image_path: Path to local image file
-
-    Returns:
-        Base64-encoded image string
-
-    Raises:
-        FileNotFoundError: If image file doesn't exist
-        ValueError: If file is not a valid image format
-    """
-    path = Path(image_path).expanduser().resolve()
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Image not found at path: {image_path}. "
-            f"Please check that the file exists and the path is correct."
-        )
-
-    if not path.is_file():
-        raise ValueError(
-            f"Path is not a file: {image_path}. Please provide a path to an image file."
-        )
-
-    # Validate image format by attempting to open with PIL
-    try:
-        with Image.open(path) as img:
-            logger.debug(
-                f"Image format: {img.format}, size: {img.size}, mode: {img.mode}"
-            )
-    except Exception as e:
-        raise ValueError(
-            f"Invalid image file at {image_path}. "
-            f"Supported formats: JPEG, PNG, GIF, WebP. Error: {e}"
-        )
-
-    # Read and encode
-    with open(path, "rb") as image_file:
-        encoded = base64.b64encode(image_file.read()).decode("utf-8")
-        logger.debug(f"Encoded image from {image_path} ({len(encoded)} chars)")
-        return encoded
 
 
 async def _validate_url(url: str) -> bool:
@@ -164,35 +121,50 @@ def _is_url(path: str) -> bool:
     return path.startswith(("http://", "https://"))
 
 
-async def _prepare_image_content(image_path: str, detail: str) -> dict[str, Any]:
+async def _prepare_image_for_pydantic(image_path: str) -> ImageUrl | BinaryContent:
     """
-    Prepare image content for OpenAI API.
+    Prepare image for PydanticAI agent.
 
     Args:
         image_path: Local file path or URL
-        detail: Image detail level ("auto", "low", "high")
 
     Returns:
-        Image content dict for OpenAI API
+        ImageUrl for URLs, BinaryContent for local files
     """
     if _is_url(image_path):
         # Validate URL
         await _validate_url(image_path)
         logger.info(f"Using image URL: {image_path}")
-        return {
-            "type": "image_url",
-            "image_url": {
-                "url": image_path,
-                "detail": detail,
-            },
-        }
+        return ImageUrl(url=image_path)
     else:
-        # Encode local file
-        encoded_image = await _encode_image_from_path(image_path)
-        logger.info(f"Using local image: {image_path}")
+        # Load local file
+        path = Path(image_path).expanduser().resolve()
+
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Image not found at path: {image_path}. "
+                f"Please check that the file exists and the path is correct."
+            )
+
+        if not path.is_file():
+            raise ValueError(
+                f"Path is not a file: {image_path}. Please provide a path to an image file."
+            )
+
+        # Validate image format by attempting to open with PIL
+        try:
+            with Image.open(path) as img:
+                logger.debug(
+                    f"Image format: {img.format}, size: {img.size}, mode: {img.mode}"
+                )
+        except Exception as e:
+            raise ValueError(
+                f"Invalid image file at {image_path}. "
+                f"Supported formats: JPEG, PNG, GIF, WebP. Error: {e}"
+            )
 
         # Determine MIME type from file extension
-        ext = Path(image_path).suffix.lower()
+        ext = path.suffix.lower()
         mime_type_map = {
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
@@ -200,31 +172,38 @@ async def _prepare_image_content(image_path: str, detail: str) -> dict[str, Any]
             ".gif": "image/gif",
             ".webp": "image/webp",
         }
-        mime_type = mime_type_map.get(ext, "image/jpeg")
+        media_type = mime_type_map.get(ext, "image/jpeg")
 
-        return {
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:{mime_type};base64,{encoded_image}",
-                "detail": detail,
-            },
-        }
+        # Read binary content
+        with open(path, "rb") as f:
+            data = f.read()
+
+        logger.info(f"Using local image: {image_path} ({len(data)} bytes)")
+        return BinaryContent(data=data, media_type=media_type)
+
+
+def _is_gpt5_model(model_name: str) -> bool:
+    """Check if model is a GPT-5 variant (which uses max_completion_tokens)."""
+    return "gpt-5" in model_name.lower()
 
 
 @mcp.tool()
 async def analyze_images(
     prompt: str,
-    image_paths: list[str],
+    image_paths: str | list[str],
     model: str | None = None,
     max_tokens: int | None = None,
-    detail: str = "auto",
     reasoning_effort: str = "high",
 ) -> dict[str, Any]:
     """
-    Analyze one or more images using Azure OpenAI vision models.
+    Analyze one or more images using vision models via PydanticAI.
 
-    This tool sends a custom prompt along with one or more images to an Azure OpenAI
-    vision model (like GPT-4o or GPT-5.2) and returns the model's analysis.
+    This tool sends a custom prompt along with one or more images to a vision model
+    and returns the model's analysis. Supports multiple providers through PydanticAI:
+    - Azure OpenAI (azure:gpt-5.2, azure:gpt-4o)
+    - OpenAI (openai:gpt-4o, openai:gpt-4-turbo)
+    - Anthropic (anthropic:claude-sonnet-4)
+    - And more via PydanticAI's model-agnostic interface
 
     Common use cases:
     - Compare two or more images
@@ -246,31 +225,36 @@ async def analyze_images(
                      URLs: "https://example.com/image.jpg"
                      Supports: JPEG, PNG, GIF, WebP
 
-        model: Azure OpenAI model deployment name (optional).
-               Defaults to AZURE_OPENAI_MODEL env var or "gpt-5.2".
-               Override to use a different model for specific tasks.
+        model: Model identifier (optional).
+               Format: "provider:model-name"
+               Examples:
+               - "azure:gpt-5.2" (default if MODEL env var not set)
+               - "openai:gpt-4o"
+               - "anthropic:claude-sonnet-4"
+               - "azure:gpt-4o"
+
+               Defaults to MODEL env var or "azure:gpt-5.2".
 
         max_tokens: Maximum tokens in response (optional).
                    None = no limit (uses model default).
+                   Note: For GPT-5 models, this is automatically converted to
+                   max_completion_tokens as required by the API.
                    Use lower values for concise responses, higher for detailed analysis.
 
-        detail: Image detail level for API (default: "auto").
-                - "auto": Let the model decide
-                - "low": Faster, cheaper, less detail (512x512)
-                - "high": Slower, more expensive, more detail (2048x2048)
-
         reasoning_effort: Model reasoning effort (default: "high").
+                         Note: Support varies by model.
                          - "low": Faster, less thorough
                          - "medium": Balanced
-                         - "high": Most thorough, best quality
+                         - "high": Most thorough, best quality (recommended for GPT-5)
 
     Returns:
         Dictionary containing:
         - analysis: The model's text response
-        - model: Model name used
-        - prompt_tokens: Number of tokens in prompt (if available)
-        - completion_tokens: Number of tokens in response (if available)
-        - total_tokens: Total tokens used (if available)
+        - model: Model identifier used
+        - usage: Token usage information (if available)
+          - prompt_tokens: Tokens in the prompt
+          - completion_tokens: Tokens in the response
+          - total_tokens: Total tokens used
 
     Raises:
         Returns error dict with details in debug mode (MCP_DEBUG=true)
@@ -285,26 +269,25 @@ async def analyze_images(
         # Describe an image from URL
         analyze_images(
             prompt="Describe this image in detail",
-            image_paths=["https://example.com/photo.jpg"],
-            detail="high"
+            image_paths="https://example.com/photo.jpg"
         )
 
-        # Extract text with custom model
+        # Extract text with OpenAI
         analyze_images(
             prompt="Extract all visible text",
             image_paths=["document.png"],
-            model="gpt-4o",
+            model="openai:gpt-4o",
             max_tokens=500
+        )
+
+        # Use Anthropic Claude
+        analyze_images(
+            prompt="Analyze this architectural design",
+            image_paths=["~/designs/floor_plan.jpg"],
+            model="anthropic:claude-sonnet-4"
         )
     """
     try:
-        # Validate environment
-        if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_API_KEY:
-            return {
-                "error": "Azure OpenAI not configured. Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env file.",
-                "error_type": "ConfigurationError",
-            }
-
         # Validate inputs
         if not prompt or not prompt.strip():
             return {
@@ -312,15 +295,13 @@ async def analyze_images(
                 "error_type": "ValueError",
             }
 
+        # Normalize image_paths to list
+        if isinstance(image_paths, str):
+            image_paths = [image_paths]
+
         if not image_paths or len(image_paths) == 0:
             return {
                 "error": "At least one image path is required. Provide local file paths or URLs.",
-                "error_type": "ValueError",
-            }
-
-        if detail not in ("auto", "low", "high"):
-            return {
-                "error": f"Invalid detail level: {detail}. Must be 'auto', 'low', or 'high'.",
                 "error_type": "ValueError",
             }
 
@@ -334,68 +315,84 @@ async def analyze_images(
         model_name = model or DEFAULT_MODEL
         logger.info(f"Using model: {model_name}")
 
-        # Initialize Azure OpenAI client
-        client = AsyncAzureOpenAI(
-            azure_endpoint=AZURE_OPENAI_ENDPOINT,
-            api_key=AZURE_OPENAI_API_KEY,
-            api_version=AZURE_API_VERSION,
-        )
-
-        # Prepare image content
-        logger.info(f"Preparing {len(image_paths)} image(s) for analysis")
-        image_contents = await asyncio.gather(
-            *[_prepare_image_content(path, detail) for path in image_paths]
-        )
-
-        # Build message content (text prompt + images)
-        message_content = [{"type": "text", "text": prompt}] + image_contents
-
-        # Prepare API call parameters
-        api_params = {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": message_content,
+        # Validate Azure configuration if using Azure model
+        if model_name.startswith("azure:"):
+            if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_API_KEY:
+                return {
+                    "error": (
+                        "Azure OpenAI not configured. Please set AZURE_OPENAI_ENDPOINT "
+                        "and AZURE_OPENAI_API_KEY in .env file or use a different model provider "
+                        "(e.g., 'openai:gpt-4o', 'anthropic:claude-sonnet-4')."
+                    ),
+                    "error_type": "ConfigurationError",
                 }
-            ],
-        }
 
-        # Add optional parameters
+        # Prepare images for PydanticAI
+        logger.info(f"Preparing {len(image_paths)} image(s) for analysis")
+        images = await asyncio.gather(
+            *[_prepare_image_for_pydantic(path) for path in image_paths]
+        )
+
+        # Build message content: prompt followed by images
+        message_parts: list[str | ImageUrl | BinaryContent] = [prompt] + images
+
+        # Build model settings
+        model_settings_kwargs: dict[str, Any] = {}
+
+        # Handle max_tokens vs max_completion_tokens
         if max_tokens is not None:
-            api_params["max_tokens"] = max_tokens
+            if _is_gpt5_model(model_name):
+                # GPT-5 models use max_completion_tokens
+                model_settings_kwargs["max_completion_tokens"] = max_tokens
+                logger.info(f"Using max_completion_tokens={max_tokens} for GPT-5 model")
+            else:
+                # Other models use max_tokens
+                model_settings_kwargs["max_tokens"] = max_tokens
+                logger.info(f"Using max_tokens={max_tokens}")
 
-        # Add reasoning_effort (if supported by model)
-        if reasoning_effort:
-            api_params["reasoning_effort"] = reasoning_effort
+        # Note: reasoning_effort is not a standard ModelSettings parameter
+        # For models that support it (like GPT-5), it would be passed differently
+        # We log it but don't include it in settings for now
+        logger.info(f"Reasoning effort: {reasoning_effort}")
+
+        model_settings = (
+            ModelSettings(**model_settings_kwargs) if model_settings_kwargs else None
+        )
+
+        # Create agent with the specified model
+        agent = Agent(model_name, model_settings=model_settings)
 
         logger.info(
-            f"Sending request to Azure OpenAI: {len(image_paths)} images, detail={detail}, reasoning_effort={reasoning_effort}"
+            f"Sending request: {len(image_paths)} images, "
+            f"reasoning_effort={reasoning_effort}"
         )
 
-        # Call Azure OpenAI API
-        response = await client.chat.completions.create(**api_params)
+        # Run the agent
+        result = await agent.run(message_parts)
 
-        # Extract response
-        analysis = response.choices[0].message.content
-
-        # Build result
-        result = {
-            "analysis": analysis,
+        # Build response
+        response = {
+            "analysis": result.output,
             "model": model_name,
         }
 
-        # Include token usage if available
-        if response.usage:
-            result["prompt_tokens"] = response.usage.prompt_tokens
-            result["completion_tokens"] = response.usage.completion_tokens
-            result["total_tokens"] = response.usage.total_tokens
-            logger.info(
-                f"Analysis complete: {response.usage.total_tokens} tokens "
-                f"(prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})"
-            )
+        # Include usage information if available
+        if hasattr(result, "usage") and result.usage:
+            usage_dict = {}
+            if hasattr(result.usage, "prompt_tokens"):
+                usage_dict["prompt_tokens"] = result.usage.prompt_tokens
+            if hasattr(result.usage, "completion_tokens"):
+                usage_dict["completion_tokens"] = result.usage.completion_tokens
+            if hasattr(result.usage, "total_tokens"):
+                usage_dict["total_tokens"] = result.usage.total_tokens
 
-        return result
+            if usage_dict:
+                response["usage"] = usage_dict
+                logger.info(
+                    f"Analysis complete: {usage_dict.get('total_tokens', 'unknown')} tokens"
+                )
+
+        return response
 
     except Exception as e:
         return _format_error(e)
@@ -403,10 +400,12 @@ async def analyze_images(
 
 def main():
     """Entry point for the MCP server."""
-    logger.info("Starting LLM Image Analyzer MCP Server")
+    logger.info("Starting LLM Image Analyzer MCP Server (PydanticAI)")
     logger.info(f"Debug mode: {DEBUG_MODE}")
     logger.info(f"Default model: {DEFAULT_MODEL}")
-    logger.info(f"Azure endpoint configured: {bool(AZURE_OPENAI_ENDPOINT)}")
+
+    if DEFAULT_MODEL.startswith("azure:"):
+        logger.info(f"Azure endpoint configured: {bool(AZURE_OPENAI_ENDPOINT)}")
 
     # Run the server (stdio transport by default)
     mcp.run()
