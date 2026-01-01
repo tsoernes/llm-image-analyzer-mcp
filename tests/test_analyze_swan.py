@@ -23,8 +23,8 @@ async def test_analyze_swan_image():
     print("=" * 80)
     print()
 
-    # Test image URL
-    image_url = "https://imgs.search.brave.com/lihQwK1YQAyaVV5R3XeU-pxIX1bUthDslrElxE_GLbU/rs:fit:500:0:1:0/g:ce/aHR0cHM6Ly9tZWRp/YS5pc3RvY2twaG90/by5jb20vaWQvMTE5/MjQ1MjMwMi9waG90/by9zd2FuLmpwZz9z/PTYxMng2MTImdz0w/Jms9MjAmYz13STV2/bzNrX2RXQXJQVURX/TEF3dkhYVDc4SFl3/XzZyX1dYSnN3Tll3/aHo4PQ"
+    # Test image URL - direct Pexels image (publicly accessible)
+    image_url = "https://images.pexels.com/photos/67287/swan-bird-animal-water-67287.jpeg?auto=compress&cs=tinysrgb&dpr=1&w=500"
 
     print(f"Image URL: {image_url}")
     print()
@@ -102,7 +102,8 @@ async def test_analyze_swan_array():
     print("=" * 80)
     print()
 
-    image_url = "https://imgs.search.brave.com/lihQwK1YQAyaVV5R3XeU-pxIX1bUthDslrElxE_GLbU/rs:fit:500:0:1:0/g:ce/aHR0cHM6Ly9tZWRp/YS5pc3RvY2twaG90/by5jb20vaWQvMTE5/MjQ1MjMwMi9waG90/by9zd2FuLmpwZz9z/PTYxMng2MTImdz0w/Jms9MjAmYz13STV2/bzNrX2RXQXJQVURX/TEF3dkhYVDc4SFl3/XzZyX1dYSnN3Tll3/aHo4PQ"
+    # Same accessible image URL
+    image_url = "https://images.pexels.com/photos/67287/swan-bird-animal-water-67287.jpeg?auto=compress&cs=tinysrgb&dpr=1&w=500"
 
     print("Testing with array image_paths parameter...")
     print()
