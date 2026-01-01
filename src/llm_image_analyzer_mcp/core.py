@@ -262,7 +262,7 @@ async def analyze_images_impl(
         )
 
         # Create agent with the specified model
-        # If output_schema provided, use result_type for structured output
+        # If output_schema provided, use output_type for structured output
         if output_schema:
             from pydantic import create_model
 
@@ -294,7 +294,7 @@ async def analyze_images_impl(
             DynamicResultModel = create_model("DynamicResult", **fields)
             agent = Agent(
                 model_name,
-                result_type=DynamicResultModel,
+                output_type=DynamicResultModel,
                 model_settings=model_settings,
             )
         else:
