@@ -5,6 +5,48 @@ All notable changes to the LLM Image Analyzer MCP Server will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-01-01
+
+### Added
+- **Structured Output Support**: New `output_schema` parameter for type-safe data extraction
+  - Extract specific fields from images using JSON schemas
+  - Perfect for receipts, invoices, forms, product details
+  - Returns structured `data` instead of free-form text
+  - Supports all JSON schema types: string, number, integer, boolean, array, object
+  - Required and optional fields supported
+  - Powered by PydanticAI's structured output capabilities
+- **11 new unit tests** for structured output validation
+  - Schema acceptance and validation
+  - Multiple field types and combinations
+  - Required vs optional fields
+  - Backwards compatibility with text output
+
+### Benefits
+- Type-safe, predictable responses for programmatic use
+- No parsing of free-form text needed
+- Automatic validation against schema
+- Ideal for data extraction workflows
+
+### Examples
+```json
+{
+  "prompt": "Extract receipt info",
+  "image_paths": "receipt.jpg",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "merchant": {"type": "string"},
+      "total": {"type": "number"}
+    }
+  }
+}
+```
+
+### Testing
+- 11/11 new structured output tests passing
+- 11/11 existing unit tests still passing
+- Backwards compatible - no breaking changes
+
 ## [0.2.0] - 2026-01-01
 
 ### Added
@@ -122,5 +164,6 @@ See `docs/PYDANTIC_AI_MIGRATION.md` for complete upgrade instructions.
 
 ## Version History
 
+- **0.3.0** (2026-01-01): Structured output support with JSON schemas
 - **0.2.0** (2026-01-01): PydanticAI integration, multi-provider support
 - **0.1.0** (2026-01-01): Initial release with Azure OpenAI

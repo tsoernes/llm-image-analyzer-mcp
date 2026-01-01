@@ -1,6 +1,6 @@
 [project]
 name = "llm-image-analyzer-mcp"
-version = "0.1.0"
+version = "0.3.0"
 description = "MCP server for analyzing images using Azure OpenAI vision models"
 readme = "README.md"
 authors = [

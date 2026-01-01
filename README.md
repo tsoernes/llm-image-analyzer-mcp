@@ -13,11 +13,13 @@ FastMCP server for analyzing images using vision models via PydanticAI - support
 - ⚡ **Async I/O** - efficient async operations throughout
 - 📊 **Token usage tracking** - see prompt, completion, and total tokens used
 - ✨ **GPT-5 support** - automatic handling of `max_completion_tokens` for GPT-5 models
+- 📋 **Structured output** - extract specific fields with JSON schemas for type-safe, predictable results
 
 ## Use Cases
 
 - Compare two or more images (e.g., screenshots, designs)
 - Describe image content in detail
+- Extract structured data from receipts, invoices, forms with JSON schemas
 - Extract text from images (OCR)
 - Identify objects, people, scenes, or brands
 - Answer questions about visual content
@@ -167,17 +169,83 @@ Returns a dictionary with:
 }
 ```
 
-**Analyze diagram with low reasoning effort:**
+**Extract structured data from receipt:**
 ```json
 {
-  "prompt": "What type of diagram is this and what does it show?",
-  "image_paths": ["https://example.com/diagram.png"],
-  "reasoning_effort": "low",
-  "detail": "low"
+  "prompt": "Extract the receipt information",
+  "image_paths": "receipt.jpg",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "merchant": {"type": "string"},
+      "total": {"type": "number"},
+      "date": {"type": "string"},
+      "items": {"type": "array"}
+    },
+    "required": ["merchant", "total"]
+  }
+}
+```
+
+**Extract product details with structured output:**
+```json
+{
+  "prompt": "Extract product information from this image",
+  "image_paths": "product.jpg",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "name": {"type": "string"},
+      "price": {"type": "number"},
+      "brand": {"type": "string"},
+      "available": {"type": "boolean"},
+      "features": {"type": "array"}
+    },
+    "required": ["name", "price"]
+  }
 }
 ```
 
 ## Configuration Options
+
+### Structured Output
+
+The `output_schema` parameter enables extracting specific fields as structured data instead of free-form text. Perfect for:
+
+- Receipt/invoice data extraction
+- Product detail extraction
+- Form field extraction
+- Object counting and categorization
+- Any scenario requiring predictable, type-safe output
+
+**How it works:**
+- Provide a JSON schema defining the expected fields and types
+- Model returns data matching your schema structure
+- Response includes `data` key instead of `analysis` key
+- Fields can be required or optional
+- Supports: string, number, integer, boolean, array, object types
+
+**Benefits:**
+- Type-safe, predictable responses
+- No parsing of free-form text needed
+- Validates against your schema
+- Perfect for programmatic use cases
+
+**Example schema structure:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "field_name": {"type": "string"},
+    "count": {"type": "integer"},
+    "price": {"type": "number"},
+    "available": {"type": "boolean"},
+    "tags": {"type": "array"},
+    "metadata": {"type": "object"}
+  },
+  "required": ["field_name"]
+}
+```
 
 ### Image Detail Levels
 

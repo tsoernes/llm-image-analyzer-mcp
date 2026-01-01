@@ -53,6 +53,7 @@ async def analyze_images(
     model: str | None = None,
     max_tokens: int | None = None,
     reasoning_effort: str = "high",
+    output_schema: dict | None = None,
 ) -> dict:
     """
     Analyze one or more images using vision models via PydanticAI.
@@ -106,9 +107,25 @@ async def analyze_images(
                          - "medium": Balanced
                          - "high": Most thorough, best quality (recommended for GPT-5)
 
+        output_schema: Optional JSON schema for structured output (default: None).
+                      When provided, the model returns data matching the schema structure
+                      instead of free-form text. Perfect for extracting specific fields.
+
+                      Example schema:
+                      {
+                          "type": "object",
+                          "properties": {
+                              "item_name": {"type": "string"},
+                              "price": {"type": "number"},
+                              "quantity": {"type": "integer"}
+                          },
+                          "required": ["item_name", "price"]
+                      }
+
     Returns:
         Dictionary containing:
-        - analysis: The model's text response
+        - analysis: The model's text response (if output_schema not provided)
+        - data: Structured data matching schema (if output_schema provided)
         - model: Model identifier used
         - usage: Token usage information (if available)
           - prompt_tokens: Tokens in the prompt
@@ -145,6 +162,22 @@ async def analyze_images(
             image_paths=["~/designs/floor_plan.jpg"],
             model="anthropic:claude-sonnet-4"
         )
+
+        # Extract structured data from receipt
+        analyze_images(
+            prompt="Extract the receipt information",
+            image_paths="receipt.jpg",
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "merchant": {"type": "string"},
+                    "total": {"type": "number"},
+                    "date": {"type": "string"},
+                    "items": {"type": "array"}
+                },
+                "required": ["merchant", "total"]
+            }
+        )
     """
     # Delegate to core implementation
     return await analyze_images_impl(
@@ -153,6 +186,7 @@ async def analyze_images(
         model=model,
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
+        output_schema=output_schema,
     )
 
 

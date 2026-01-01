@@ -164,6 +164,7 @@ async def analyze_images_impl(
     model: str | None = None,
     max_tokens: int | None = None,
     reasoning_effort: str = "high",
+    output_schema: dict | None = None,
 ) -> dict[str, Any]:
     """
     Core implementation of image analysis - testable without MCP decoration.
@@ -177,6 +178,8 @@ async def analyze_images_impl(
         model: Model identifier (format: "provider:model-name")
         max_tokens: Maximum tokens in response (auto-converts for GPT-5)
         reasoning_effort: Model reasoning effort ("low", "medium", "high")
+        output_schema: Optional JSON schema for structured output
+                      When provided, model returns data matching the schema
 
     Returns:
         Dictionary containing analysis results or error information
@@ -259,7 +262,43 @@ async def analyze_images_impl(
         )
 
         # Create agent with the specified model
-        agent = Agent(model_name, model_settings=model_settings)
+        # If output_schema provided, use result_type for structured output
+        if output_schema:
+            from pydantic import create_model
+
+            # Create a dynamic Pydantic model from the JSON schema
+            # Convert JSON schema to Pydantic field definitions
+            fields = {}
+            if "properties" in output_schema:
+                for field_name, field_def in output_schema["properties"].items():
+                    field_type = str  # Default to string
+                    if field_def.get("type") == "number":
+                        field_type = float
+                    elif field_def.get("type") == "integer":
+                        field_type = int
+                    elif field_def.get("type") == "boolean":
+                        field_type = bool
+                    elif field_def.get("type") == "array":
+                        field_type = list
+                    elif field_def.get("type") == "object":
+                        field_type = dict
+
+                    # Check if field is required
+                    is_required = field_name in output_schema.get("required", [])
+                    if is_required:
+                        fields[field_name] = (field_type, ...)
+                    else:
+                        fields[field_name] = (field_type | None, None)
+
+            # Create dynamic model
+            DynamicResultModel = create_model("DynamicResult", **fields)
+            agent = Agent(
+                model_name,
+                result_type=DynamicResultModel,
+                model_settings=model_settings,
+            )
+        else:
+            agent = Agent(model_name, model_settings=model_settings)
 
         logger.info(
             f"Sending request: {len(image_paths)} images, "
@@ -270,10 +309,20 @@ async def analyze_images_impl(
         result = await agent.run(message_parts)
 
         # Build response
-        response = {
-            "analysis": result.output,
-            "model": model_name,
-        }
+        if output_schema:
+            # For structured output, return the parsed data
+            response = {
+                "data": result.output.model_dump()
+                if hasattr(result.output, "model_dump")
+                else result.output,
+                "model": model_name,
+            }
+        else:
+            # For text output, return as analysis
+            response = {
+                "analysis": result.output,
+                "model": model_name,
+            }
 
         # Include usage information if available
         if hasattr(result, "usage") and result.usage:
