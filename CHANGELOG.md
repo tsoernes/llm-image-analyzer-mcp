@@ -5,6 +5,108 @@ All notable changes to the LLM Image Analyzer MCP Server will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Two-Step Path Resolution Fallback**: Improved path handling for relative paths
+  - Automatically tries path relative to current working directory first
+  - Falls back to stripping first directory component if initial attempt fails
+  - Helps handle cases where users include project root directory in paths
+  - Example: `myproject/images/photo.jpg` automatically resolves to `images/photo.jpg` if needed
+  - Applies to all image path inputs across all tools
+  - See `docs/PATH_RESOLUTION.md` for detailed documentation
+
+## [0.4.0] - 2026-01-06
+
+### Added
+- **Mistral Document AI Support**: New `use_mistral` parameter for specialized document processing
+  - Integration with Azure Mistral Document AI via Azure Foundry
+  - Optimized for OCR, scanned documents, forms, invoices, and tables
+  - Superior text extraction quality for complex document layouts
+  - Native support for structured documents with tables
+  - Uses same Azure endpoint and API key as Azure OpenAI
+  - Configurable via `AZURE_MISTRAL_DEPLOYMENT` environment variable (default: `mistral-document-ai-2505`)
+- **New dependency**: `mistralai-azure` (installed from GitHub)
+- **SVG Support**: Automatic conversion of SVG files to PNG for processing
+  - Uses `cairosvg` library for high-quality conversion
+  - Works with both PydanticAI and Mistral Document AI
+  - Transparent to users - just pass SVG paths like any other image
+  - 150 DPI conversion for optimal text recognition
+- **New dependency**: `cairosvg` for SVG conversion
+- **Enhanced documentation**: Updated README with Mistral usage examples and configuration
+
+### Changed
+- Updated `pyproject.toml` to include `mistralai-azure` from git source
+- Version bumped to 0.4.0
+
+### Features
+- **When to use Mistral**:
+  - Scanned documents requiring high-quality OCR
+  - Forms, invoices, receipts with structured layouts
+  - Documents containing tables
+  - Text extraction from complex layouts
+  - High-accuracy document understanding tasks
+- **Benefits**:
+  - Superior OCR quality compared to general vision models
+  - Excellent table detection and extraction
+  - Native form and structured document support
+  - Works with local files and URLs
+  - Supports JPEG, PNG, GIF, WebP, SVG formats
+
+### Limitations
+- `output_schema` parameter is not supported when `use_mistral=True`
+- Returns text analysis only (no structured output with Mistral)
+
+### Examples
+```json
+{
+  "prompt": "Extract all text and tables from this document",
+  "image_paths": ["scanned_document.pdf"],
+  "use_mistral": true
+}
+```
+
+```json
+{
+  "prompt": "Extract invoice details including line items and totals",
+  "image_paths": ["invoice.png"],
+  "use_mistral": true
+}
+```
+
+### Configuration
+- Requires `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`
+- Optional: `AZURE_MISTRAL_DEPLOYMENT` (default: `mistral-document-ai-2505`)
+- Updated `.env.example` with Mistral configuration
+
+### SVG Support Details
+- SVG files automatically detected by `.svg` extension
+- Converted to PNG at 150 DPI for optimal quality
+- Works seamlessly with both standard vision models and Mistral
+- No user action required - just pass SVG paths
+- Useful for technical drawings, diagrams, flowcharts, schematics
+
+## [Unreleased - Future]
+
+### Added
+- **Relative Path Resolution**:
+  - Relative paths (e.g., `"image.jpg"`, `"screenshots/before.png"`) are now resolved against the current working directory (`Path.cwd()`)
+  - Enables natural path usage when MCP server is launched with `uv run --project`
+  - Absolute paths, URLs, and `~` expansion work as before
+  - Comprehensive test coverage with 7 unit tests
+
+### Changed
+- **Recommended Zed Configuration**: Use `--project` instead of `--directory` flag when launching the server
+  - With `--project`, `Path.cwd()` returns the caller's directory (your workspace)
+  - With `--directory`, `Path.cwd()` returns the switched-to directory (server's installation dir)
+  - This makes relative paths resolve against your workspace automatically
+
+### Benefits
+- Simple and intuitive - relative paths work naturally from your workspace
+- No extra parameters needed
+- Works seamlessly with `uv run --project`
+- Backwards compatible - absolute paths and URLs unaffected
+
 ## [0.3.0] - 2026-01-01
 
 ### Added
@@ -164,6 +266,8 @@ See `docs/PYDANTIC_AI_MIGRATION.md` for complete upgrade instructions.
 
 ## Version History
 
+- **Unreleased**: Relative path resolution using Path.cwd()
+- **0.4.0** (2026-01-06): Mistral Document AI support + SVG file support
 - **0.3.0** (2026-01-01): Structured output support with JSON schemas
 - **0.2.0** (2026-01-01): PydanticAI integration, multi-provider support
 - **0.1.0** (2026-01-01): Initial release with Azure OpenAI

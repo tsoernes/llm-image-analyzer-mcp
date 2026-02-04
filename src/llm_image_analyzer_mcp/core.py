@@ -6,12 +6,14 @@ tested independently of the FastMCP framework.
 """
 
 import asyncio
+import base64
 import logging
 import os
 import traceback
 from pathlib import Path
 from typing import Any
 
+import cairosvg
 import httpx
 from PIL import Image
 from pydantic_ai import Agent, BinaryContent, ImageUrl, ModelSettings
@@ -92,6 +94,96 @@ def _is_url(path: str) -> bool:
     return path.startswith(("http://", "https://"))
 
 
+def _resolve_path_with_fallback(image_path: str) -> Path:
+    """
+    Resolve a relative path with two-step fallback strategy.
+
+    1. First attempt: Try path relative to current working directory
+    2. Second attempt: Strip first directory component and try again
+
+    Args:
+        image_path: The image path to resolve
+
+    Returns:
+        Resolved Path object that exists
+
+    Raises:
+        FileNotFoundError: If neither path exists
+
+    Example:
+        If cwd is /home/user/code/ and path is "someproject/pic.jpeg":
+        - First try: /home/user/code/someproject/pic.jpeg
+        - If fails, try: /home/user/code/pic.jpeg (strip "someproject/")
+    """
+    path = Path(image_path).expanduser()
+
+    # If absolute path, return as-is
+    if path.is_absolute():
+        return path.resolve()
+
+    # First attempt: resolve relative to cwd
+    first_attempt = Path.cwd() / path
+    first_attempt = first_attempt.resolve()
+
+    if first_attempt.exists():
+        logger.debug(f"Resolved relative path '{image_path}' to: {first_attempt}")
+        return first_attempt
+
+    # Second attempt: strip first directory component and try again
+    parts = path.parts
+    second_attempt = None
+    if len(parts) > 1:
+        # Strip first directory component
+        stripped_path = Path(*parts[1:])
+        second_attempt = Path.cwd() / stripped_path
+        second_attempt = second_attempt.resolve()
+
+        if second_attempt.exists():
+            logger.debug(
+                f"Resolved relative path '{image_path}' to: {second_attempt} "
+                f"(stripped first component '{parts[0]}')"
+            )
+            return second_attempt
+
+    # Neither path exists
+    error_msg = f"Image not found at path: {image_path}. Tried: {first_attempt}"
+    if second_attempt is not None:
+        error_msg += f" and {second_attempt}"
+    error_msg += ". Please check that the file exists and the path is correct."
+
+    raise FileNotFoundError(error_msg)
+
+
+def _convert_svg_to_png(svg_path: Path) -> bytes:
+    """
+    Convert SVG file to PNG bytes with high resolution for OCR.
+
+    Args:
+        svg_path: Path to SVG file
+
+    Returns:
+        PNG image data as bytes
+    """
+    try:
+        # Read SVG content
+        with open(svg_path, "rb") as f:
+            svg_data = f.read()
+
+        # Convert to PNG with cairosvg
+        # Scale up by 4x (from 420x297 to 1680x1188) for better OCR
+        # This gives us ~300 DPI equivalent for A3 size documents
+        png_data = cairosvg.svg2png(
+            bytestring=svg_data,
+            scale=4.0,
+        )
+
+        logger.info(f"Converted SVG to PNG: {svg_path} ({len(png_data)} bytes)")
+        return png_data
+
+    except Exception as e:
+        raise ValueError(f"Failed to convert SVG to PNG: {svg_path}. Error: {e}")
+
+
 async def _prepare_image_for_pydantic(image_path: str) -> ImageUrl | BinaryContent:
     """
     Prepare image for PydanticAI agent.
@@ -108,19 +200,21 @@ async def _prepare_image_for_pydantic(image_path: str) -> ImageUrl | BinaryConte
         logger.info(f"Using image URL: {image_path}")
         return ImageUrl(url=image_path)
     else:
-        # Load local file
-        path = Path(image_path).expanduser().resolve()
-
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Image not found at path: {image_path}. "
-                f"Please check that the file exists and the path is correct."
-            )
+        # Load local file with two-step fallback resolution
+        path = _resolve_path_with_fallback(image_path)
 
         if not path.is_file():
             raise ValueError(
                 f"Path is not a file: {image_path}. Please provide a path to an image file."
             )
+
+        # Check if SVG and convert to PNG
+        ext = path.suffix.lower()
+        if ext == ".svg":
+            logger.info(f"Detected SVG file, converting to PNG: {image_path}")
+            png_data = _convert_svg_to_png(path)
+            logger.info(f"Using converted SVG: {image_path} ({len(png_data)} bytes)")
+            return BinaryContent(data=png_data, media_type="image/png")
 
         # Validate image format by attempting to open with PIL
         try:
@@ -131,11 +225,10 @@ async def _prepare_image_for_pydantic(image_path: str) -> ImageUrl | BinaryConte
         except Exception as e:
             raise ValueError(
                 f"Invalid image file at {image_path}. "
-                f"Supported formats: JPEG, PNG, GIF, WebP. Error: {e}"
+                f"Supported formats: JPEG, PNG, GIF, WebP, SVG. Error: {e}"
             )
 
         # Determine MIME type from file extension
-        ext = path.suffix.lower()
         mime_type_map = {
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
@@ -165,6 +258,7 @@ async def analyze_images_impl(
     max_tokens: int | None = None,
     reasoning_effort: str = "high",
     output_schema: dict | None = None,
+    use_mistral: bool = False,
 ) -> dict[str, Any]:
     """
     Core implementation of image analysis - testable without MCP decoration.
@@ -175,11 +269,17 @@ async def analyze_images_impl(
     Args:
         prompt: The question or instruction for analyzing the image(s)
         image_paths: Single image path (string) or multiple paths (list)
+                    Can be absolute paths, relative paths, URLs, or paths with ~
+                    Relative paths are resolved against current working directory
+                    Supports: JPEG, PNG, GIF, WebP, SVG (automatically converted to PNG)
         model: Model identifier (format: "provider:model-name")
         max_tokens: Maximum tokens in response (auto-converts for GPT-5)
         reasoning_effort: Model reasoning effort ("low", "medium", "high")
         output_schema: Optional JSON schema for structured output
                       When provided, model returns data matching the schema
+        use_mistral: If True, use Mistral Document AI via Azure Foundry instead of PydanticAI
+                    Requires AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and
+                    AZURE_MISTRAL_DEPLOYMENT environment variables
 
     Returns:
         Dictionary containing analysis results or error information
@@ -189,6 +289,9 @@ async def analyze_images_impl(
         default_model = os.getenv("MODEL", "azure:gpt-5.2")
         azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        mistral_deployment = os.getenv(
+            "AZURE_MISTRAL_DEPLOYMENT", "mistral-document-ai-2505"
+        )
 
         # Validate inputs
         if not prompt or not prompt.strip():
@@ -212,6 +315,17 @@ async def analyze_images_impl(
                 "error": f"Invalid reasoning_effort: {reasoning_effort}. Must be 'low', 'medium', or 'high'.",
                 "error_type": "ValueError",
             }
+
+        # If using Mistral Document AI, handle differently
+        if use_mistral:
+            logger.info(f"Using Mistral Document AI: {mistral_deployment}")
+            return await _analyze_with_mistral(
+                prompt=prompt,
+                image_paths=image_paths,
+                azure_endpoint=azure_endpoint,
+                azure_api_key=azure_api_key,
+                deployment=mistral_deployment,
+            )
 
         # Determine model to use
         model_name = model or default_model
@@ -344,3 +458,175 @@ async def analyze_images_impl(
 
     except Exception as e:
         return _format_error(e)
+
+
+async def _analyze_with_mistral(
+    prompt: str,
+    image_paths: list[str],
+    azure_endpoint: str | None,
+    azure_api_key: str | None,
+    deployment: str,
+) -> dict[str, Any]:
+    """
+    Analyze images using Mistral Document AI via Azure Foundry.
+
+    Uses the OCR API endpoint which accepts document images.
+
+    Args:
+        prompt: Analysis prompt (currently unused by OCR API, but kept for consistency)
+        image_paths: List of image paths (local files or URLs)
+        azure_endpoint: Azure endpoint URL
+        azure_api_key: Azure API key
+        deployment: Mistral deployment name
+
+    Returns:
+        Dictionary with analysis results
+    """
+    # Validate Azure configuration
+    if not azure_endpoint or not azure_api_key:
+        return {
+            "error": (
+                "Azure configuration required for Mistral Document AI. "
+                "Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env file."
+            ),
+            "error_type": "ConfigurationError",
+        }
+
+    # Use Azure Foundry endpoint directly
+    # Replace cognitiveservices.azure.com with services.ai.azure.com
+    foundry_endpoint = azure_endpoint.replace(
+        "cognitiveservices.azure.com", "services.ai.azure.com"
+    )
+    ocr_url = foundry_endpoint.rstrip("/") + "/providers/mistral/azure/ocr"
+
+    logger.info(f"Using Mistral OCR endpoint: {ocr_url}")
+
+    # Mistral OCR processes one document at a time
+    # For multiple images, we'll process them separately and combine results
+    all_results = []
+
+    for image_path in image_paths:
+        try:
+            if _is_url(image_path):
+                # For URLs, validate and use directly
+                await _validate_url(image_path)
+                document_url = image_path
+                logger.info(f"Processing URL image: {image_path}")
+            else:
+                # For local files, read and encode as base64
+                path = _resolve_path_with_fallback(image_path)
+
+                # Check if SVG and convert
+                ext = path.suffix.lower()
+                if ext == ".svg":
+                    logger.info(f"Converting SVG to PNG for Mistral: {image_path}")
+                    image_data = _convert_svg_to_png(path)
+                    media_type = "image/png"
+                else:
+                    # Validate with PIL
+                    with Image.open(path) as img:
+                        logger.debug(f"Image: {img.format}, {img.size}, {img.mode}")
+
+                    # Read image data
+                    with open(path, "rb") as f:
+                        image_data = f.read()
+
+                    # Determine MIME type
+                    mime_type_map = {
+                        ".jpg": "image/jpeg",
+                        ".jpeg": "image/jpeg",
+                        ".png": "image/png",
+                        ".gif": "image/gif",
+                        ".webp": "image/webp",
+                    }
+                    media_type = mime_type_map.get(ext, "image/jpeg")
+
+                # Encode as base64
+                image_base64 = base64.b64encode(image_data).decode("utf-8")
+
+                # Create data URL
+                document_url = f"data:{media_type};base64,{image_base64}"
+                logger.info(
+                    f"Encoded local image: {image_path} ({len(image_data)} bytes)"
+                )
+
+            # Call Mistral OCR API directly with httpx
+            logger.info(f"Calling Mistral OCR for: {image_path}")
+
+            payload = {
+                "model": deployment,
+                "document": {"type": "image_url", "image_url": document_url},
+                "include_image_base64": False,
+            }
+
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {azure_api_key}",
+            }
+
+            async with httpx.AsyncClient(timeout=60.0) as http_client:
+                response = await http_client.post(
+                    ocr_url, json=payload, headers=headers
+                )
+
+                if response.status_code != 200:
+                    error_msg = f"HTTP {response.status_code}: {response.text}"
+                    logger.error(f"Mistral API error for {image_path}: {error_msg}")
+                    all_results.append(f"=== {image_path} ===\n[Error: {error_msg}]")
+                    continue
+
+                response_data = response.json()
+
+            # Extract text from OCR response
+            ocr_text = ""
+            try:
+                pages = response_data.get("pages", [])
+                if pages:
+                    page_texts = []
+                    for page in pages:
+                        markdown = page.get("markdown", "")
+                        if markdown:
+                            page_texts.append(markdown)
+                    ocr_text = "\n\n".join(page_texts)
+
+                if not ocr_text:
+                    logger.warning(f"Empty OCR result for {image_path}")
+                    ocr_text = f"[No text extracted from {image_path}]"
+
+                all_results.append(f"=== {image_path} ===\n{ocr_text}")
+                logger.info(
+                    f"OCR extracted {len(ocr_text)} characters from {image_path}"
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to parse OCR response for {image_path}: {e}")
+                all_results.append(
+                    f"=== {image_path} ===\n[Error extracting text: {e}]"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to process image {image_path}: {e}")
+            all_results.append(f"=== {image_path} ===\n[Error: {e}]")
+
+    # Combine all results
+    if all_results:
+        combined_text = "\n\n".join(all_results)
+
+        # Add prompt context if provided
+        if prompt and prompt.strip():
+            analysis = f"User request: {prompt}\n\n{combined_text}"
+        else:
+            analysis = combined_text
+
+        result = {
+            "analysis": analysis,
+            "model": f"mistral:{deployment}",
+        }
+
+        logger.info(f"Mistral OCR complete: processed {len(image_paths)} image(s)")
+        return result
+    else:
+        return {
+            "error": "No results from Mistral Document AI",
+            "error_type": "APIError",
+        }
