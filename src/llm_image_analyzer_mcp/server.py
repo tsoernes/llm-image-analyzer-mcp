@@ -6,11 +6,13 @@ Supports Azure OpenAI, OpenAI, Anthropic, and other providers via PydanticAI's
 model-agnostic interface.
 """
 
+import argparse
 import logging
 import os
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from llm_image_analyzer_mcp._shared_http import transport_options
 
 from llm_image_analyzer_mcp.core import analyze_images_impl
 
@@ -192,6 +194,13 @@ async def analyze_images(
 
 def main():
     """Entry point for the MCP server."""
+    parser = argparse.ArgumentParser(description="Image analyzer (stdio or shared HTTP)")
+    parser.add_argument("--http-port", type=int, default=None)
+    parser.add_argument("--http-token-file", default=None)
+    args = parser.parse_args()
+    options = transport_options(
+        mcp, http_port=args.http_port, http_token_file=args.http_token_file
+    )
     logger.info("Starting LLM Image Analyzer MCP Server (PydanticAI)")
     logger.info(f"Debug mode: {DEBUG_MODE}")
     logger.info(f"Default model: {DEFAULT_MODEL}")
@@ -200,7 +209,7 @@ def main():
         logger.info(f"Azure endpoint configured: {bool(AZURE_OPENAI_ENDPOINT)}")
 
     # Run the server (stdio transport by default)
-    mcp.run()
+    mcp.run(**options)
 
 
 if __name__ == "__main__":

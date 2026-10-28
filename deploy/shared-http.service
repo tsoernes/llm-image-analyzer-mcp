@@ -1,0 +1,20 @@
+[Unit]
+Description=Shared local llm-image-analyzer MCP service
+After=network.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/code/llm-image-analyzer
+EnvironmentFile=%h/.config/shared-mcp/llm-image-analyzer.env
+Environment=PYTHONPATH=%h/code/llm-image-analyzer/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/code/llm-image-analyzer/.venv/bin/python -m llm_image_analyzer_mcp.server --http-port 8793 --http-token-file %h/.config/shared-mcp/llm-image-analyzer.token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+MemoryAccounting=true
+
+[Install]
+WantedBy=default.target
